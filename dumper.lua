@@ -9,6 +9,7 @@ local dumper = {
 -- @param table options What is saved
 function dumper:Dump(options)
   local dump = {};
+  local errors = {};
   local entities = chardumps.entityManager:GetEntities();
   local names = chardumps.entityManager:GetNames();
 
@@ -16,8 +17,17 @@ function dumper:Dump(options)
   for _, name in ipairs(names) do
     functionName = "Get" .. chardumps:Ucfirst(name) .. "Data";
     fun = self[functionName];
-    if fun and options.entities[name] and entities[name] and not entities[name].disable then
-      dump[name] = chardumps:TryCall(fun) or {};
+    if entities[name].dynamic then
+      dump[name] = {};
+    elseif fun and options.entities[name] and not entities[name].disable then
+      local ok, result = pcall(fun);
+      if ok and type(result) == "table" then
+        dump[name] = result;
+      else
+        errors[name] = tostring(result or "collector returned no data");
+        chardumps.log:Error("Failed to capture " .. name .. ": " .. errors[name]);
+        dump[name] = {};
+      end
     else
       dump[name] = {};
     end
@@ -33,7 +43,11 @@ function dumper:Dump(options)
     end
   end
 
+  self.dump = dump;
   dump.CHD_FIELD_COUNT = self:GetCounts(dump);
+  if next(errors) then
+    dump.CHD_ERRORS = errors;
+  end
 
   if options.crypt then
     local json = chardumps.encryption:toJson(dump);
@@ -41,9 +55,8 @@ function dumper:Dump(options)
   else
     CHD_CLIENT = dump;
   end
-  self.dump = dump;
-
   self:UpdateAllFrames();
+  return not next(errors);
 end
 
 function dumper:UpdateAllFrames()
@@ -143,7 +156,7 @@ function dumper:GetAchievementData()
           posixtime = time({["year"] = 2000 + year, ["month"] = month, ["day"] = day});
           personalCount = personalCount + 1;
           if posixtime then
-            table.insert(res, i, posixtime);
+            res[i] = posixtime;
           end
         end
       end
@@ -224,7 +237,7 @@ function dumper:GetBagData()
         local tmpItem = {};
         for id, enchant, gem1, gem2, gem3 in string.gmatch(itemLink,".-Hitem:(%d+):(%d+):(%d+):(%d+):(%d+)") do
           tmpItem = {
-            ["I"] = tonumber(id)
+            ["I"] = tonumber(id), ["link"] = itemLink, ["slot"] = slot
           };
           if count > 1 then tmpItem["N"] = count end
           if tonumber(enchant) > 0 then tmpItem["H"] = tonumber(enchant) end
@@ -274,7 +287,7 @@ function dumper:GetBankData()
       local count = GetInventoryItemCount("player",i)
       for id, enchant, gem1, gem2, gem3 in string.gmatch(itemLink,".-Hitem:(%d+):(%d+):(%d+):(%d+):(%d+)") do
         local tmpItem = {
-          ["I"] = tonumber(id)
+          ["I"] = tonumber(id), ["link"] = itemLink
         };
         if count > 1 then tmpItem["N"] = count end
         if tonumber(enchant) > 0 then tmpItem["H"] = tonumber(enchant) end
@@ -300,7 +313,7 @@ function dumper:GetBankData()
         local _, count = GetContainerItemInfo(i, slot);
         for id, enchant, gem1, gem2, gem3 in string.gmatch(itemLink, ".-Hitem:(%d+):(%d+):(%d+):(%d+):(%d+)") do
           local tmpItem = {
-            ["I"] = tonumber(id)
+            ["I"] = tonumber(id), ["link"] = itemLink
           };
           if count > 1 then tmpItem["N"] = count end
           if tonumber(enchant) > 0 then tmpItem["H"] = tonumber(enchant) end
@@ -372,7 +385,7 @@ function dumper:GetCriteriasData()
           -- flags, assetID, quantityString, criteriaID = GetAchievementCriteriaInfo(achievementID, j);
           local _, _, _, quantity, _, _, _, _, _, criteriaID = GetAchievementCriteriaInfo(achievementId, j);
           if criteriaID and quantity > 0 then
-            table.insert(res, criteriaID, quantity);
+            res[criteriaID] = quantity;
           end
         end
       end
@@ -432,7 +445,7 @@ function dumper:GetCurrencyDataReal()
       -- name, isHeader, isExpanded, isUnused, isWatched, count, extraCurrencyType, icon, itemID = GetCurrencyListInfo(index)
       local _, isHeader, _, _, _, count, _, _, itemID = GetCurrencyListInfo(i);
       if (not isHeader) and itemID and (count > 0) then
-        table.insert(res, itemID, count);
+        res[itemID] = count;
       end
     end
   elseif patchVersion == 4 then
@@ -440,7 +453,7 @@ function dumper:GetCurrencyDataReal()
       -- name, amount, texturePath, earnedThisWeek, weeklyMax, totalMax, isDiscovered = GetCurrencyInfo(id)
       local name, amount, _, _, _, _, isDiscovered = GetCurrencyInfo(currencyId);
       if name and isDiscovered and amount > 0 then
-        table.insert(res, currencyId, amount);
+        res[currencyId] = amount;
       end
     end
   end
@@ -578,7 +591,7 @@ function dumper:GetInventoryData()
       itemCount = GetInventoryItemCount("player", i);
       for id, enchant, gem1, gem2, gem3 in string.gmatch(itemLink,".-Hitem:(%d+):(%d+):(%d+):(%d+):(%d+)") do 
         local tmpItem = {
-          ["I"] = tonumber(id)
+          ["I"] = tonumber(id), ["link"] = itemLink
         };
         if itemCount > 1 then tmpItem["N"] = itemCount end
         if tonumber(enchant) > 0 then tmpItem["H"] = tonumber(enchant) end
@@ -598,7 +611,7 @@ function dumper:GetInventoryData()
       local _, itemCount = GetContainerItemInfo(container, slot);
       for id, enchant, gem1, gem2, gem3 in string.gmatch(itemLink, ".-Hitem:(%d+):(%d+):(%d+):(%d+):(%d+)") do 
         local tmpItem = {
-          ["I"] = tonumber(id)
+          ["I"] = tonumber(id), ["link"] = itemLink
         };
         if itemCount > 1 then tmpItem["N"] = itemCount end
         if tonumber(enchant) > 0 then tmpItem["H"] = tonumber(enchant) end
@@ -620,7 +633,7 @@ function dumper:GetInventoryData()
       local id = GetContainerItemID(container, slot);
       local _, itemCount = GetContainerItemInfo(container, slot);
       local tmpItem = {
-        ["I"] = tonumber(id)
+        ["I"] = tonumber(id), ["link"] = itemLink
       };
       if itemCount > 1 then tmpItem["N"] = itemCount end
       res[index] = tmpItem;
@@ -690,6 +703,7 @@ function dumper:GetPlayerData()
   local honorableKills = GetPVPLifetimeStats()
   res.kills            = honorableKills;
   res.money            = math.floor(GetMoney() / 10000); -- convert to gold
+  res.money_copper     = GetMoney();
   if type(GetNumTalentGroups) == "function" then
     res.specs            = GetNumTalentGroups();
   end
@@ -867,12 +881,11 @@ function dumper:GetSpellData()
       if spellLink then
         local spellid = tonumber(strmatch(spellLink, "Hspell:(%d+)"));
         if spellid > 0 then
-          table.insert(res, spellid, i);
+          res[spellid] = i;
         end
       end
     end
   end
-  table.sort(res, function (v1, v2) return v1[1] < v2[1] end);
 
   return res;
 end
@@ -894,7 +907,7 @@ function dumper:GetStatisticData()
       if criteriaCount > 0 then
         local _, _, completedCriteria, quantity, _, _, _, _, _, criteriaID = GetAchievementCriteriaInfo(statisticID, 1);
         if criteriaID and completedCriteria and quantity > 0 then
-          table.insert(res, criteriaID, quantity);
+          res[criteriaID] = quantity;
         end
       end
     end
@@ -942,15 +955,14 @@ function dumper:GetTalentData()
       -- link = GetTalentLink(tabIndex, talentIndex, inspect, pet, talentGroup)
       talentLink = GetTalentLink(tabIndex, i, false, false, specNum);
 
-      local talentId = tonumber(strmatch(talentLink, "Htalent:(%d+)"));
-      if (rank ~= nil) and (rank > 0) and (talentId > 0) then
-        table.insert(specTalent, talentId, rank);
+      local talentId = talentLink and tonumber(strmatch(talentLink, "Htalent:(%d+)"));
+      if rank and rank > 0 and talentId and talentId > 0 then
+        specTalent[talentId] = rank;
       end
 
       end
     end
 
-    table.sort(specTalent, function (v1, v2) return v1.I < v2.I end);
 
     res[specNum] = specTalent;
   end
@@ -1072,7 +1084,7 @@ function dumper:GetCounts(dump)
   res.achievement = chardumps:GetTableLength(dump.achievement);
   res.action = chardumps:GetTableLength(dump.action);
   res.bag = self:GetBagItemsCount();
-  res.bank = self:GetBankItemsCount();
+  res.bank = dump.bank and next(dump.bank) and self:GetBankItemsCount() or 0;
   res.bind = #dump.bind;
   res.criterias = chardumps:GetTableLength(dump.criterias);
   res.critter = #dump.critter;
@@ -1089,11 +1101,11 @@ function dumper:GetCounts(dump)
   res.reputation = #dump.reputation;
   res.mount = #dump.mount;
   res.talent = self:GetTalentItemsCount();
-  res.taxi = self:GetTaxiItemsCount();
+  res.taxi = dump.taxi and next(dump.taxi) and self:GetTaxiItemsCount() or 0;
   res.title = #dump.title;
   res.spell = chardumps:GetTableLength(dump.spell);
   res.skill = #dump.skill;
-  res.skillspell = self:GetSkillspellItemsCount();
+  res.skillspell = dump.skillspell and next(dump.skillspell) and self:GetSkillspellItemsCount() or 0;
   res.statistic = chardumps:GetTableLength(dump.statistic);
 
   return res;

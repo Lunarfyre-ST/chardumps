@@ -7,6 +7,10 @@ local function encodeString(s)
 --	s = string.gsub(s,"'","\\'");
 	s = string.gsub(s,"\n","\\n");
 	s = string.gsub(s,"\t","\\t");
+	s = string.gsub(s, "[%z\1-\8\11\12\14-\31]", function(c)
+		return string.format("\\u%04x", string.byte(c));
+	end);
+	s = string.gsub(s, "\r", "\\r");
 	return s;
 end
 

@@ -328,10 +328,15 @@ function mainFrame:OnDumpClick()
   end
 
   local dumpOption = options:GetOptionsForDump();
-  chardumps.dumper:Dump(dumpOption);
+  local complete = chardumps.dumper:Dump(dumpOption);
 
   mainFrame.btnSave:Enable();
-  chardumps.log:Message(L.CreatedDump);
+  if complete then
+    chardumps.log:Message(L.CreatedDump);
+  else
+    chardumps.log:Warning("Dump is incomplete. Failed categories are listed above and in CHD_ERRORS.");
+  end
+  chardumps.log:Warning("Bank, recipes, completed quests and flight paths require prior in-game collection; cached data may be incomplete or stale.");
   chardumps.log:Message(L.DumpDone);
 end
 
@@ -406,7 +411,7 @@ end
 function mainFrame:SetEntityChecked(name, value)
   local data = self.entitiesData[name];
   if data then
-    value = value or true;
+    if value == nil then value = true end
     data.checkbox:SetChecked(value);
   end
 end
@@ -414,11 +419,14 @@ end
 function mainFrame:OnEvent(event, ...)
   chardumps.log:Debug(event);
   if "BANKFRAME_OPENED" == event then
-    local bankData = {};
     if mainFrame:IsEntityChecked("bank") then
-      bankData = chardumps:TryCall(chardumps.dumper.GetBankData) or {};
+      local ok, bankData = pcall(chardumps.dumper.GetBankData);
+      if ok then
+        chardumps.dumper:SetDynamicData("bank", bankData);
+      else
+        chardumps.log:Error("Failed to capture bank: " .. tostring(bankData));
+      end
     end
-    chardumps.dumper:SetDynamicData("bank", bankData);
     local count = chardumps.dumper:GetBankItemsCount();
     mainFrame:UpdateEntityText("bank", count);
   elseif "PLAYER_LEAVING_WORLD" == event then
@@ -426,11 +434,11 @@ function mainFrame:OnEvent(event, ...)
   elseif "TAXIMAP_OPENED" == event then
     mainFrame:OnTaximapOpened();
   elseif "ADDON_LOADED" == event then
-    mainFrame:OnAddonLoaded(arg1);
+    mainFrame:OnAddonLoaded(...);
   elseif "VARIABLES_LOADED" == event then
     mainFrame:OnVariablesLoaded();
   elseif "TRADE_SKILL_SHOW" == event then
-    mainFrame:OnTradeSkillShow(arg1);
+    mainFrame:OnTradeSkillShow(...);
   elseif "QUEST_TURNED_IN" == event then
     if chardumps:GetPatchVersion() <= 3 then
       return
@@ -453,9 +461,9 @@ function mainFrame:OnEvent(event, ...)
   elseif "QUEST_QUERY_COMPLETE" == event then
     mainFrame:OnQuestQueryComplete();
   elseif "PLAYER_LOGOUT" == event then
-    chardumps.log:Debug(event .. " " .. arg1 .. " " .. arg2);
+    chardumps.log:Debug(event, ...);
   else
-    chardumps.log:Debug(event, arg1, arg2, arg3);
+    chardumps.log:Debug(event, ...);
   end
 end
 
@@ -637,8 +645,6 @@ function mainFrame:OnPlayerLeavingWorld()
 end
 
 function mainFrame:OnVariablesLoaded()
-  CHD_CLIENT = {};
-
   local playerOptions = chardumps:GetPlayerOptions();
   chardumps.dumper:SetDynamicDataAll(playerOptions.dynamicData);
   chardumps.dumper:UpdateDynamicAllFrames();

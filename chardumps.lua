@@ -117,21 +117,41 @@ function chardumps:initSlashCommands()
 end
 
 function chardumps:checkWowVersion()
-  if not self:GetPatchVersion() then
-    assert("Unsupported WoW version!");
+  if self:GetPatchVersion() == 0 then
+    chardumps.log:Warning("Unsupported WoW client build; capture may be incomplete.");
   end
+end
+
+local function copyOptions(value)
+  if type(value) ~= "table" then return value end
+  local result = {};
+  for key, item in pairs(value) do result[key] = copyOptions(item) end
+  return result;
 end
 
 ---
 -- @return #table
 function chardumps:GetPlayerOptions()
-  local playerName = UnitName("player"); -- unique
-  local playerKey = playerName;
+  local playerName = UnitName("player");
+  local playerKey = GetRealmName() .. " - " .. playerName;
 
   if CHD_ACCOUNT_OPTIONS == nil then
     CHD_ACCOUNT_OPTIONS = {};
   end
 
+  -- Old versions keyed by name alone. Assign that data to the first realm
+  -- that loads it, while retaining the original entry for recovery.
+  if not CHD_ACCOUNT_OPTIONS[playerKey] and CHD_ACCOUNT_OPTIONS[playerName]
+      and not CHD_ACCOUNT_OPTIONS.__legacyOwners then
+    CHD_ACCOUNT_OPTIONS.__legacyOwners = {};
+  end
+  local owners = CHD_ACCOUNT_OPTIONS.__legacyOwners;
+  if not CHD_ACCOUNT_OPTIONS[playerKey] and CHD_ACCOUNT_OPTIONS[playerName]
+      and not owners[playerName] then
+    CHD_ACCOUNT_OPTIONS[playerKey] = copyOptions(CHD_ACCOUNT_OPTIONS[playerName]);
+    owners[playerName] = playerKey;
+    chardumps.log:Warning("Migrated name-only options for " .. playerKey .. "; check cached data if this name exists on multiple realms.");
+  end
   return CHD_ACCOUNT_OPTIONS[playerKey] or {};
 end
 
@@ -139,7 +159,8 @@ end
 -- @param #table options
 function chardumps:SetPlayerOptions(options)
   local playerName = UnitName("player"); -- unique
-  local playerKey = playerName;
+  local playerKey = GetRealmName() .. " - " .. playerName;
+  CHD_ACCOUNT_OPTIONS = CHD_ACCOUNT_OPTIONS or {};
   if CHD_ACCOUNT_OPTIONS[playerKey] == nil then
     CHD_ACCOUNT_OPTIONS[playerKey] = {};
   end

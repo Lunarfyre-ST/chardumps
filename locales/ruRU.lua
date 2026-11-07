@@ -72,7 +72,7 @@ if GetLocale():lower() == "ruru" then
   L.chbBind         = "Бинды"
   L.chbQuests       = "Задания"
   L.chbTaxi         = "Полеты"
-  L.chbCrypt        = "Шифрование"
+  L.chbCrypt        = "Base64 JSON"
 
   L.loadmessage = "Аддон загружен, создатель gracerpro@gmail.com"
 
@@ -153,7 +153,7 @@ if GetLocale():lower() == "ruru" then
   L.ttchbQuests     = "Включить/Отключить сохранение заданий"
   L.ttchbTaxi       = "Включить/Отключить сохранение полетов\n(1, 2, 3, 4)\n1 -- полеты в Калимдоре\n2 -- полеты в Восточных Королевствах\n3 -- полеты в Запределье\n4 -- полеты в Нордсколе"
 
-  L.ttchbCrypt      = "Включить/Отключить шифрование данных"
+  L.ttchbCrypt      = "Кодирование JSON в Base64. Это не шифрование."
 
   L.ttbtnDump       = "Создать дамп персонажа"
   L.ttbtnReload     = "Сохранить дамп на диск, записать в файл 'chardumps.lua'"
