@@ -2,6 +2,18 @@ local chardumps = chardumps;
 
 local entityViews = {};
 
+function entityViews:InventoryItemLabel(item)
+  local itemId = item.I or 0;
+  local link = type(item.link) == "string" and item.link or nil;
+  if not link and itemId > 0 then
+    local _, cachedLink = GetItemInfo(itemId);
+    link = cachedLink;
+  end
+  link = link or ("Item #" .. tostring(itemId));
+  if item.N and item.N > 1 then link = link .. " x" .. tostring(item.N) end
+  return link;
+end
+
 function entityViews:UpdatePlayerView(frame)
   local player = chardumps.dumper:GetEntity("player");
   local values = {};
@@ -198,12 +210,8 @@ function entityViews:UpdateInventoryView(frame)
     widgets.scrollBar:SetMinMaxValues(0, maxValue);
     widgets.scrollBar:SetValue(0);
     for i, item in pairs(inventory) do
-      local itemId = item["I"] or 0;
-      local itemName, itemLink = GetItemInfo(itemId);
-      if itemLink then
-        widgets.scrollMessageFrame:AddMessage(index1 .. " " .. itemLink);
-        index1 = index1 + 1;
-      end
+      widgets.scrollMessageFrame:AddMessage(index1 .. " " .. self:InventoryItemLabel(item));
+      index1 = index1 + 1;
     end
   end
 

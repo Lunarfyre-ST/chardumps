@@ -46,7 +46,7 @@ function mainFrame:RegisterWorkEvents(frame)
     "TAXIMAP_OPENED", "VARIABLES_LOADED", "BANKFRAME_OPENED", "PLAYER_LEAVING_WORLD",
     "TRADE_SKILL_SHOW", "QUEST_DETAIL", "QUEST_PROGRESS",
     "QUEST_QUERY_COMPLETE", "ADDON_LOADED", "PLAYER_LOGOUT", -- UNIT_QUEST_LOG_CHANGED
-    "QUEST_TURNED_IN",
+    "QUEST_TURNED_IN", "TIME_PLAYED_MSG", "GUILDBANKFRAME_OPENED", "GUILDBANKFRAME_CLOSED",
   }
   frame:UnregisterAllEvents();
   for _, name in pairs(events) do
@@ -112,15 +112,15 @@ function mainFrame:Init()
   btn:SetScript("OnClick", self.OnDumpClick);
   btn:SetPoint("BOTTOMRIGHT", -10, 10);
 
+  local btnOverview = widgets:CreateButton(frame, {cx = 100, cy = 20, text = "Overview"});
+  btnOverview:SetPoint("BOTTOMLEFT", 10, 10);
+  btnOverview:SetScript("OnClick", function() mainFrame:ShowOverview() end);
+
   self.btnSave = widgets:CreateButton(frame, {name = "btnReload", cx = 100});
   self.btnSave:ClearAllPoints();
   self.btnSave:SetScript("OnClick", self.OnSaveClick);
   self.btnSave:SetPoint("BOTTOMRIGHT", -10 - 5 - 100, 10);
   self.btnSave:Disable();
-
-  self.chbCrypt = widgets:CreateCheckbox(frame, {name = "chbCrypt", cx = 14, cy = 14, text = L["chbCrypt"]});
-  self.chbCrypt:ClearAllPoints();
-  self.chbCrypt:SetPoint("BOTTOMRIGHT", -10 - 5 - 300, 10);
 
   self.chbEvents = widgets:CreateCheckbox(frame, {name = "chbEvents", cx = 14, cy = 14, text = "Events"});
   self.chbEvents:ClearAllPoints();
@@ -150,14 +150,19 @@ function mainFrame:Init()
   local chbAll = widgets:CreateCheckbox(frame, {x = 28, y = -10, cx = 14, cy = 14,
     tooltipTitle = chbAllTooltip, withoutText = true});
   chbAll:SetScript("OnClick", self.OnChbAllClick);
+  local selectAllLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal");
+  selectAllLabel:SetPoint("TOPLEFT", 45, -10);
+  selectAllLabel:SetText(L.SelectAllCategories or "Select all");
 
   -- Create entity's structure
-  for name, entity in pairs(entities) do
+  for _, name in ipairs(chardumps.entityManager:GetNames()) do
+    local entity = entities[name];
+    local deleteButton;
     if not entity.always and not entity.disable then
-      local btn = widgets:CreateButton(frame, {x = 10, y = -y, cx = 12, cy = 12, tooltipTitle = L.Delete});
-      btn.chdEntityName = name;
-      btn:SetScript("OnClick", function()
-        mainFrame:DeleteEntityData(btn.chdEntityName);
+      deleteButton = widgets:CreateButton(frame, {x = 10, y = -y, cx = 12, cy = 12, tooltipTitle = L.Delete});
+      deleteButton.chdEntityName = name;
+      deleteButton:SetScript("OnClick", function(self)
+        mainFrame:DeleteEntityData(self.chdEntityName);
       end)
     end
 
@@ -190,7 +195,7 @@ function mainFrame:Init()
 
     local entityData = {};
     entityData.checkbox = chb;
-    entityData.deleteButton = btn;
+    entityData.deleteButton = deleteButton;
     entityData.dataFrame = self:CreateEntityFrame(name, frame);
     entityData.activeButton = btnActive;
     self.entitiesData[name] = entityData;
@@ -295,6 +300,134 @@ function mainFrame:UpdateEntityView(name)
   end
 end
 
+local function formatTime(stamp)
+  if type(stamp) ~= "number" then return "time unknown" end
+  return date("%Y-%m-%d %H:%M", stamp);
+end
+
+local function sortedKeys(tbl)
+  local keys = {};
+  for key in pairs(tbl or {}) do table.insert(keys, key) end
+  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end);
+  return keys;
+end
+
+function mainFrame:ShowOverview()
+  if not self.overview then
+    local window = CreateFrame("Frame", chardumps.widgets:genFrameName(), self.frame);
+    window:SetPoint("TOPLEFT", self.frame, "TOPLEFT", 10, -28);
+    window:SetPoint("BOTTOMRIGHT", self.frame, "BOTTOMRIGHT", -10, 36);
+    window:SetBackdrop(chardumps.widgets:GetBackdrop());
+    window:SetFrameLevel(self.frame:GetFrameLevel() + 5);
+    window:EnableMouse(true);
+    local title = window:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge");
+    title:SetPoint("TOPLEFT", 12, -10);
+    title:SetText("Collection and account overview");
+    local close = chardumps.widgets:CreateButton(window, {cx = 55, cy = 20, text = "Close"});
+    close:SetPoint("TOPRIGHT", -8, -6);
+    close:SetScript("OnClick", function() window:Hide() end);
+    local textFrame = CreateFrame("ScrollingMessageFrame", nil, window);
+    textFrame:SetPoint("TOPLEFT", 10, -36);
+    textFrame:SetPoint("BOTTOMRIGHT", -10, 8);
+    textFrame:SetFontObject("GameFontHighlightSmall");
+    textFrame:SetJustifyH("LEFT");
+    textFrame:SetMaxLines(1000);
+    textFrame:SetFading(false);
+    textFrame:EnableMouseWheel(true);
+    textFrame:SetScript("OnMouseWheel", function(frame, delta)
+      if delta > 0 then frame:ScrollUp() else frame:ScrollDown() end
+    end);
+    window.textFrame = textFrame;
+    self.overview = window;
+  end
+
+  local textFrame = self.overview.textFrame;
+  textFrame:Clear();
+  local function line(text) textFrame:AddMessage(text, 1, 1, 1) end
+  line("CURRENT CHARACTER: " .. (UnitName("player") or "?") .. " - " .. (GetRealmName() or "?"));
+  line("A collected status means observed, not verified complete. Mouse wheel scrolls.");
+  local labels = {{"bank", "Personal bank"}, {"quest", "Completed quests"},
+    {"skillspell", "Profession recipes"}, {"taxi", "Flight paths"},
+    {"playtime", "Playtime (/played)"}, {"guildbank", "Guild bank tabs"}};
+  for _, entry in ipairs(labels) do
+    local name, label = entry[1], entry[2];
+    local state, record = chardumps.captureStatus:Get(name);
+    local enabled = self.entitiesData[name] and self:IsEntityChecked(name);
+    local selection = self.entitiesData[name] and (enabled and " [included]" or " [unchecked]") or "";
+    local stamp = record and record.at and (" - " .. formatTime(record.at)) or "";
+    line(label .. ": " .. state .. stamp .. selection);
+    if record and record.reason then line("  Last error: " .. record.reason) end
+    if record and record.state == "failed" and record.last_success_at then
+      line("  Previous observation: " .. formatTime(record.last_success_at) .. " (may be stale)");
+    end
+    if record and record.details then
+      local details = {};
+      for _, key in ipairs(sortedKeys(record.details)) do
+        table.insert(details, tostring(key) .. " (" .. formatTime(record.details[key]) .. ")");
+      end
+      line("  Observed: " .. table.concat(details, ", "));
+    end
+  end
+  line("Open bank and each profession; query quests; visit flight masters by continent; use /played.");
+  line("Guild bank: open a tab, wait for it to load, then type /chardumps guildbank.");
+  line(" ");
+  line("ACCOUNT SNAPSHOTS (Save or log out to write the file)");
+  local found = false;
+  for _, realm in ipairs(sortedKeys(CHD_ACCOUNT_DUMPS)) do
+    for _, character in ipairs(sortedKeys(CHD_ACCOUNT_DUMPS[realm])) do
+      found = true;
+      local index = CHD_ACCOUNT_INDEX and CHD_ACCOUNT_INDEX[realm] and CHD_ACCOUNT_INDEX[realm][character];
+      line(character .. " - " .. realm .. ": " .. (index and formatTime(index.captured_at) or "legacy, time unknown"));
+      if index then
+        local missing = {};
+        for _, entry in ipairs(labels) do
+          local key = entry[1];
+          if key ~= "guildbank" then
+            local status = index.collection and index.collection[key];
+            if key ~= "playtime" and not (index.selected and index.selected[key]) then
+              table.insert(missing, entry[2] .. " unchecked");
+            elseif not status or status.state ~= "collected" then
+              table.insert(missing, entry[2] .. " " .. (status and status.state or "not collected"));
+            end
+          end
+        end
+        for _, entry in ipairs({{"achievement", "Achievements"}, {"criterias", "Criteria"},
+          {"reputation", "Reputation"}, {"inventory", "Equipment/backpack"}, {"bag", "Bags"},
+          {"spell", "Spells"}, {"talent", "Talents"}, {"skill", "Skills"}}) do
+          if not (index.selected and index.selected[entry[1]]) then
+            table.insert(missing, entry[2] .. " unchecked");
+          end
+        end
+        if next(index.errors or {}) then
+          table.insert(missing, "failed: " .. table.concat(sortedKeys(index.errors), ", "));
+        end
+        if #missing > 0 then line("  Review: " .. table.concat(missing, "; ")) end
+      end
+    end
+  end
+  if not found then line("No character snapshots yet.") end
+  line(" ");
+  line("GUILD BANK SNAPSHOTS");
+  local guildFound = false;
+  for _, realm in ipairs(sortedKeys(CHD_GUILD_BANKS)) do
+    for _, guild in ipairs(sortedKeys(CHD_GUILD_BANKS[realm])) do
+      guildFound = true;
+      local bank = CHD_GUILD_BANKS[realm][guild];
+      line(guild .. " - " .. realm .. ": last observed " .. formatTime(bank.observed_at));
+      for tab = 1, (bank.tab_count or 0) do
+        local observed = bank.tabs and bank.tabs[tab];
+        local permission = bank.permissions and bank.permissions[tab];
+        local description = observed and ("observed " .. formatTime(observed.observed_at)) or "not observed";
+        if permission and permission.can_view == false then description = description .. ", not viewable by last character" end
+        line("  Tab " .. tab .. ": " .. description);
+      end
+    end
+  end
+  if not guildFound then line("No guild-bank tabs observed yet.") end
+  textFrame:ScrollToTop();
+  self.overview:Show();
+end
+
 function mainFrame:OnHideClick()
   mainFrame.Hide();
 end
@@ -323,11 +456,16 @@ function mainFrame:OnDumpClick()
       options:AddEntityForDump(name);
     end
   end
-  if mainFrame.chbCrypt:GetChecked() then
-    options:AddOptionForDump("crypt");
-  end
 
   local dumpOption = options:GetOptionsForDump();
+  local missingItems = {};
+  if not dumpOption.entities.inventory then table.insert(missingItems, L.inventory or "Inventory") end
+  if not dumpOption.entities.bag then table.insert(missingItems, L.bag or "Bags") end
+  if #missingItems > 0 then
+    chardumps.log:Warning(string.format(L.ItemsNotSelected or
+      "Not selected: %s. Check the squares beside these categories and press Dump again.",
+      table.concat(missingItems, ", ")));
+  end
   local complete = chardumps.dumper:Dump(dumpOption);
 
   mainFrame.btnSave:Enable();
@@ -337,7 +475,10 @@ function mainFrame:OnDumpClick()
     chardumps.log:Warning("Dump is incomplete. Failed categories are listed above and in CHD_ERRORS.");
   end
   chardumps.log:Warning("Bank, recipes, completed quests and flight paths require prior in-game collection; cached data may be incomplete or stale.");
-  chardumps.log:Message(L.DumpDone);
+  if not chardumps.dumper.playedTime then
+    chardumps.log:Warning("Playtime has not been received. Use /played, wait for the response, then dump again.");
+  end
+  chardumps.log:Message("Save or log out to write the account dump to WTF/Account/<account>/SavedVariables/chardumps.lua.");
 end
 
 function mainFrame:OnSaveClick()
@@ -418,12 +559,24 @@ end
 
 function mainFrame:OnEvent(event, ...)
   chardumps.log:Debug(event);
-  if "BANKFRAME_OPENED" == event then
+  if "TIME_PLAYED_MSG" == event then
+    local total, level = ...;
+    if type(total) == "number" and type(level) == "number" then
+      chardumps.dumper.playedTime = {total_seconds = total, level_seconds = level, collected_at = time()};
+      chardumps.captureStatus:Mark("playtime", true);
+    end
+  elseif "GUILDBANKFRAME_OPENED" == event then
+    chardumps.guildBank.isOpen = true;
+  elseif "GUILDBANKFRAME_CLOSED" == event then
+    chardumps.guildBank.isOpen = false;
+  elseif "BANKFRAME_OPENED" == event then
     if mainFrame:IsEntityChecked("bank") then
       local ok, bankData = pcall(chardumps.dumper.GetBankData);
       if ok then
         chardumps.dumper:SetDynamicData("bank", bankData);
+        chardumps.captureStatus:Mark("bank", true);
       else
+        chardumps.captureStatus:Mark("bank", false, nil, tostring(bankData));
         chardumps.log:Error("Failed to capture bank: " .. tostring(bankData));
       end
     end
@@ -432,13 +585,13 @@ function mainFrame:OnEvent(event, ...)
   elseif "PLAYER_LEAVING_WORLD" == event then
     mainFrame:OnPlayerLeavingWorld();
   elseif "TAXIMAP_OPENED" == event then
-    mainFrame:OnTaximapOpened();
+    mainFrame:TryCollection("taxi", function() mainFrame:OnTaximapOpened() end);
   elseif "ADDON_LOADED" == event then
     mainFrame:OnAddonLoaded(...);
   elseif "VARIABLES_LOADED" == event then
     mainFrame:OnVariablesLoaded();
   elseif "TRADE_SKILL_SHOW" == event then
-    mainFrame:OnTradeSkillShow(...);
+    mainFrame:TryCollection("skillspell", function() mainFrame:OnTradeSkillShow() end);
   elseif "QUEST_TURNED_IN" == event then
     if chardumps:GetPatchVersion() <= 3 then
       return
@@ -459,11 +612,19 @@ function mainFrame:OnEvent(event, ...)
     end
     chardumps.log:Message(s);
   elseif "QUEST_QUERY_COMPLETE" == event then
-    mainFrame:OnQuestQueryComplete();
+    mainFrame:TryCollection("quest", function() mainFrame:OnQuestQueryComplete() end);
   elseif "PLAYER_LOGOUT" == event then
     chardumps.log:Debug(event, ...);
   else
     chardumps.log:Debug(event, ...);
+  end
+end
+
+function mainFrame:TryCollection(name, fn)
+  local ok, err = pcall(fn);
+  if not ok then
+    chardumps.captureStatus:Mark(name, false, nil, tostring(err));
+    chardumps.log:Error("Failed to collect " .. name .. ": " .. tostring(err));
   end
 end
 
@@ -477,11 +638,7 @@ function mainFrame:ApplyOptions()
       self:SetEntityChecked(name, checked);
     end
   end
-  if not playerOptions.debug then
-    playerOptions.crypt = true;
-  end
   chardumps.options:SetDebug(playerOptions.debug);
-  self.chbCrypt:SetChecked(playerOptions.crypt);
   if playerOptions.minimize then
     self:OnMinimizeClick();
   end
@@ -489,10 +646,8 @@ end
 
 function mainFrame:SetDebug(value)
   if value then
-    self.chbCrypt:Show();
     self.chbEvents:Show();
   else
-    self.chbCrypt:Hide();
     self.chbEvents:Hide();
   end
 end
@@ -501,6 +656,27 @@ function mainFrame:OnQuestQueryComplete()
   local questIds = chardumps.dumper:GetQuestDataReal();
   local count = chardumps:GetTableLength(questIds);
   self:UpdateEntityText("quest", count);
+  chardumps.captureStatus:Mark("quest", true);
+end
+
+---
+-- Recipe filters hide entries from GetNumTradeSkills, so a filtered list
+-- must not be stored as the full recipe list.
+-- @return #string reason when a filter is active, otherwise nil
+local function getActiveTradeSkillFilter()
+  if type(GetTradeSkillItemNameFilter) == "function" then
+    local text = GetTradeSkillItemNameFilter();
+    if text and text ~= "" then return "the search box" end
+  end
+  local makeable = TradeSkillFrameAvailableFilterCheckButton;
+  if makeable and makeable:GetChecked() then return "\"Have Materials\"" end
+  -- Filter index 0 is "All"; it is 1 when nothing is filtered out.
+  if type(GetTradeSkillSubClassFilter) == "function" and not GetTradeSkillSubClassFilter(0) then
+    return "the subclass filter"
+  end
+  if type(GetTradeSkillInvSlotFilter) == "function" and not GetTradeSkillInvSlotFilter(0) then
+    return "the slot filter"
+  end
 end
 
 -- http://wowprogramming.com/docs/api_categories#tradeskill
@@ -514,6 +690,17 @@ function mainFrame:OnTradeSkillShow(flags)
   local tradeskillName, rank, maxLevel = GetTradeSkillLine();
   if (nil == tradeskillName or "UNKNOWN" == tradeskillName) then
     return
+  end
+
+  -- Another player's linked profession is not this character's recipe list.
+  if IsTradeSkillLinked() then
+    return
+  end
+
+  local filter = getActiveTradeSkillFilter();
+  if filter then
+    error("Recipes for " .. tradeskillName .. " were not saved because " .. filter ..
+      " is active. Clear the recipe filters and reopen the profession.");
   end
 
   local i = 1;
@@ -534,10 +721,9 @@ function mainFrame:OnTradeSkillShow(flags)
     local skillName, skillType, numAvailable, isExpanded = GetTradeSkillInfo(i);
     if (skillType and "header" ~= skillType) then
       local link = GetTradeSkillRecipeLink(i);
-      local spellID = tonumber(strmatch(link, "\124Henchant:(%d+)"));
-      if spellID then
-        table.insert(res, spellID);
-      end
+      local spellID = link and tonumber(strmatch(link, "\124Henchant:(%d+)"));
+      if not spellID then error("Recipe link is not available for " .. tostring(skillName)) end
+      table.insert(res, spellID);
     end
   end
   table.sort(res);
@@ -546,15 +732,10 @@ function mainFrame:OnTradeSkillShow(flags)
   local count = #res;
   chardumps.log:Message(string.format(L.TradeSkillFound, count));
 
-  -- isLinked, name = IsTradeSkillLinked()
-  local isLinked = IsTradeSkillLinked();
-  if isLinked then
-    return
-  end
-
   local data = chardumps.dumper:GetDynamicData("skillspell");
   data[tradeskillName] = res;
   chardumps.dumper:SetDynamicData("skillspell", data);
+  chardumps.captureStatus:Mark("skillspell", true, tradeskillName);
 
   if count > 0 then
     local s = L.ttchbSkillSpell .. "\n";
@@ -595,6 +776,11 @@ function mainFrame:OnTaximapOpened()
   6 - Pandaria
 
   --]]
+  -- The world map keeps whatever continent it last showed; point it at the
+  -- player's zone so the nodes are filed under the right continent.
+  if type(SetMapToCurrentZone) == "function" and not (WorldMapFrame and WorldMapFrame:IsShown()) then
+    SetMapToCurrentZone();
+  end
   local continent = GetCurrentMapContinent();
   if (continent < 1) or (continent > chardumps.MAX_NUM_CONTINENT) then
     return
@@ -604,11 +790,15 @@ function mainFrame:OnTaximapOpened()
   local arrContinent = {L.Kalimdor, L.EasternKingdoms, L.Outland, L.Northrend};
   chardumps.log:Message(L.GetTaxi .. arrContinent[continent]);
   for i = 1, NumTaxiNodes() do
-    table.insert(res, TaxiNodeName(i));
+    -- "NONE" nodes are shown on the map but not learned by this character.
+    if TaxiNodeGetType(i) ~= "NONE" then
+      table.insert(res, TaxiNodeName(i));
+    end
   end
   local taxiData = chardumps.dumper:GetDynamicData("taxi");
   taxiData[continent] = res;
   chardumps.dumper:SetDynamicData("taxi", taxiData);
+  chardumps.captureStatus:Mark("taxi", true, tostring(continent));
 
   mainFrame:UpdateEntityText("taxi", chardumps.dumper:GetTaxiItemsCount());
 
@@ -636,17 +826,22 @@ function mainFrame:OnPlayerLeavingWorld()
   local playerOptions = chardumps:GetPlayerOptions();
 
   playerOptions.entities = entities;
-  playerOptions.crypt = self.chbCrypt:GetChecked();
+  playerOptions.crypt = nil; -- removed option; drop the stale saved value
   playerOptions.minimize = options.minimize;
   -- TODO: may be errors on the reading
   playerOptions.dynamicData = chardumps.dumper:GetDynamicDataAll();
+  playerOptions.collectionStatus = chardumps.captureStatus:Snapshot();
+  playerOptions.playedTime = chardumps.dumper.playedTime;
 
   chardumps:SetPlayerOptions(playerOptions);
 end
 
 function mainFrame:OnVariablesLoaded()
+  chardumps.dumper:StoreAccountDump(CHD_CLIENT, true);
   local playerOptions = chardumps:GetPlayerOptions();
   chardumps.dumper:SetDynamicDataAll(playerOptions.dynamicData);
+  chardumps.captureStatus:Load(playerOptions.collectionStatus, playerOptions.dynamicData);
+  chardumps.dumper.playedTime = playerOptions.playedTime;
   chardumps.dumper:UpdateDynamicAllFrames();
 
   self:ApplyOptions();

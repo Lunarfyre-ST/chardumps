@@ -1,18 +1,18 @@
-#
+#!/usr/bin/env bash
+set -e
 declare -a files;
 
 files=(
 
 'global.lua'
 'log.lua'
-'locales\enUS.lua'
-'locales\ruRU.lua'
+'locales/enUS.lua'
 'valid_bindings.lua'
-'b64.lua'
 
-'encryption.lua'
 'config.lua'
 'functions.lua'
+'capture_status.lua'
+'guild_bank.lua'
 'entity_manager.lua'
 'widgets.lua'
 'options.lua'
@@ -28,13 +28,13 @@ targetFile="addon.lua";
 targetFilePath="$targetDir/$targetFile";
 
 echo "Concationation to $targetFilePath";
-echo "" > ${targetFilePath};
+echo "" > "${targetFilePath}";
 
 for ((i=0; i < ${#files[@]}; i++))
 do
-  echo ${files[$i]};
-  cat ${files[$i]} >> ${targetFilePath};
-  echo -e "\n" >> ${targetFilePath};
+  echo "${files[$i]}";
+  cat "${files[$i]}" >> "${targetFilePath}";
+  echo -e "\n" >> "${targetFilePath}";
 done
 
 echo "Finish.";

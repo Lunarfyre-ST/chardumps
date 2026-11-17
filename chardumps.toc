@@ -9,19 +9,18 @@
 ## eMail: gracerpro@gmail.com
 ## DefaultState: Enabled
 ## LoadOnDemand: 0
-## SavedVariables: CHD_ACCOUNT_OPTIONS
+## SavedVariables: CHD_ACCOUNT_OPTIONS, CHD_ACCOUNT_DUMPS, CHD_ACCOUNT_INDEX, CHD_GUILD_BANKS
 ## SavedVariablesPerCharacter: CHD_CLIENT
 
 global.lua
 log.lua
 locales\enUS.lua
-locales\ruRU.lua
 valid_bindings.lua
-b64.lua
 
-encryption.lua
 config.lua
 functions.lua
+capture_status.lua
+guild_bank.lua
 entity_manager.lua
 widgets.lua
 options.lua

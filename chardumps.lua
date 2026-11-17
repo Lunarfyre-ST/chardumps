@@ -5,12 +5,6 @@ function chardumps:GetEntityManager()
 end
 
 ---
--- @return #table
-function chardumps:GetEncryption()
-  return self.encryption;
-end
-
----
 -- @return #string
 function chardumps:GetLocale()
 	return self.locale;
@@ -67,11 +61,14 @@ function chardumps:initSlashCommands()
   local helpFun = function()
     local log = chardumps.log;
     log:Message("/chardumps, /chardumps help");
+    log:Message("/chardumps dump");
     log:Message("/chardumps clear");
     log:Message("/chardumps save");
     log:Message("/chardumps show");
     log:Message("/chardumps hide");
     log:Message("/chardumps minimize")
+    log:Message("/chardumps overview");
+    log:Message("/chardumps guildbank");
     log:Message("/chardumps version");
   end
   local commandHandlers = {
@@ -98,6 +95,13 @@ function chardumps:initSlashCommands()
     minimize = function()
       chardumps.mainFrame.OnMinimizeClick();
     end,
+    overview = function()
+      chardumps.mainFrame:Show();
+      chardumps.mainFrame:ShowOverview();
+    end,
+    guildbank = function()
+      chardumps.guildBank:CaptureRequested();
+    end,
     version = function()
       chardumps.log:Message(chardumps:GetVersion());
     end,
@@ -107,7 +111,8 @@ function chardumps:initSlashCommands()
   _G["SLASH_" .. commandId .. 1] = "/chardumps";
   SlashCmdList[commandId] = function(msg, editBox)
     -- parse only one argument
-    local commnadHandler = commandHandlers[msg];
+    local command = string.lower((msg or ""):match("^%s*(.-)%s*$"));
+    local commnadHandler = commandHandlers[command];
     if (commnadHandler ~= nil) then
       commnadHandler();
     else

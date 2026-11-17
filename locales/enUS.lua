@@ -72,7 +72,6 @@ L.chbBind         = "Bindings"
 L.chbQuests       = "Quests"
 L.chbTaxi         = "Taxi"
 
-L.chbCrypt        = "Base64 JSON"
 
 L.loadmessage = "Addon is loaded, created by gracerpro@gmail.com"
 
@@ -153,7 +152,6 @@ L.ttchbBind       = "On/Off save of bindings"
 L.ttchbQuests     = "On/Off save of completed quests"
 L.ttchbTaxi       = "On/Off save of taxi\n(1, 2, 3, 4)\n1 -- taxi in Kalimdor\n2 -- taxi in Eastern Kingdoms\n3 -- taxi in Outland\n4 -- taxi in Northrend"
 
-L.ttchbCrypt      = "Encode JSON as Base64. This does not encrypt the data."
 
 L.ttbtnDump       = "Create the dump of player"
 L.ttbtnReload     = "Save dump on the disk, write to file 'chardumps.lua'"
@@ -163,6 +161,8 @@ L.ttbtnQuestDel   = "Delete quest`s information"
 L.ttbtnTaxiDel    = "Delete taxi`s information"
 L.ttbtnSkillSpellDel = "Delete skill`s spells information"
 L.ttchbAll        = "Set/Unset all"
+L.SelectAllCategories = "Select all"
+L.ItemsNotSelected = "Not selected: %s. Check the squares beside these categories and press Dump again."
 L.deleteAll       = "Delete all"
 
 L.WarnApAnHonorByCurrency = "Honor points and arena points don't saved. Set currency saving option!"

@@ -31,7 +31,6 @@ function options:ClearForDump()
   self.dumpOptions = {
     entities = {},
     -- entities
-    -- crypt
     -- etc.
   };
 end
@@ -46,7 +45,8 @@ end
 -- Add entity for the dump, safe
 function options:AddOptionForDump(name, value)
   if name == "entities" then
-    chardumps.log.error("options: Wrong name `entities`");
+    chardumps.log:Error("options: Wrong name `entities`");
+    return;
   end
   if value == nil then
     value = true;

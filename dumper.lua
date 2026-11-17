@@ -5,11 +5,29 @@ local dumper = {
 	dynamicDump = {}, -- taxi, bank, quest, skillspell
 };
 
+local function copyDump(value)
+  if type(value) ~= "table" then return value end
+  local result = {};
+  for key, item in pairs(value) do result[key] = copyDump(item) end
+  return result;
+end
+
+function dumper:StoreAccountDump(value, onlyIfMissing)
+  if value == nil or (type(value) == "table" and not next(value)) then return end
+  local realm, character = GetRealmName(), UnitName("player");
+  CHD_ACCOUNT_DUMPS = CHD_ACCOUNT_DUMPS or {};
+  CHD_ACCOUNT_DUMPS[realm] = CHD_ACCOUNT_DUMPS[realm] or {};
+  if not onlyIfMissing or CHD_ACCOUNT_DUMPS[realm][character] == nil then
+    CHD_ACCOUNT_DUMPS[realm][character] = copyDump(value);
+  end
+end
+
 ---
 -- @param table options What is saved
 function dumper:Dump(options)
   local dump = {};
   local errors = {};
+  self.activeDumpOptions = options;
   local entities = chardumps.entityManager:GetEntities();
   local names = chardumps.entityManager:GetNames();
 
@@ -45,16 +63,29 @@ function dumper:Dump(options)
 
   self.dump = dump;
   dump.CHD_FIELD_COUNT = self:GetCounts(dump);
+  self.activeDumpOptions = nil;
+  dump.CHD_SCHEMA_VERSION = 1;
+  dump.CHD_CAPTURE = {
+    captured_at = time(),
+    selected = copyDump(options.entities),
+    collection = chardumps.captureStatus:Snapshot(),
+  };
   if next(errors) then
     dump.CHD_ERRORS = errors;
   end
 
-  if options.crypt then
-    local json = chardumps.encryption:toJson(dump);
-    CHD_CLIENT = b64_encode(json);
-  else
-    CHD_CLIENT = dump;
-  end
+  CHD_CLIENT = dump;
+  self:StoreAccountDump(CHD_CLIENT);
+  local realm, character = GetRealmName(), UnitName("player");
+  CHD_ACCOUNT_INDEX = CHD_ACCOUNT_INDEX or {};
+  CHD_ACCOUNT_INDEX[realm] = CHD_ACCOUNT_INDEX[realm] or {};
+  CHD_ACCOUNT_INDEX[realm][character] = {
+    schema_version = dump.CHD_SCHEMA_VERSION,
+    captured_at = dump.CHD_CAPTURE.captured_at,
+    selected = copyDump(options.entities),
+    collection = copyDump(dump.CHD_CAPTURE.collection),
+    errors = copyDump(errors),
+  };
   self:UpdateAllFrames();
   return not next(errors);
 end
@@ -117,8 +148,41 @@ function dumper:DeleteEntityData(name)
   self.dump[name] = nil;
   if self.dynamicDump[name] then
     self.dynamicDump[name] = nil;
+    chardumps.captureStatus.records[name] = nil;
+    chardumps.captureStatus.session[name] = nil;
   end
   self:UpdateFrame(name);
+end
+
+local function addContainerDetails(item, bag, slot)
+  local _, _, _, quality = GetContainerItemInfo(bag, slot);
+  if quality ~= nil then item.quality = quality end
+  if type(GetContainerItemDurability) == "function" then
+    local ok, current, maximum = pcall(GetContainerItemDurability, bag, slot);
+    if ok and current ~= nil and maximum ~= nil then
+      item.durability = current;
+      item.max_durability = maximum;
+    end
+  end
+end
+
+local function readContainerItem(bag, slot)
+  local link = GetContainerItemLink(bag, slot);
+  local texture, count = GetContainerItemInfo(bag, slot);
+  if (texture and not link) or (link and not count) then
+    error("Item data not loaded for bag " .. bag .. " slot " .. slot);
+  end
+  return link, count;
+end
+
+local function addInventoryDetails(item, slot)
+  if type(GetInventoryItemDurability) == "function" then
+    local ok, current, maximum = pcall(GetInventoryItemDurability, slot);
+    if ok and current ~= nil and maximum ~= nil then
+      item.durability = current;
+      item.max_durability = maximum;
+    end
+  end
 end
 
 function dumper:Init()
@@ -142,7 +206,7 @@ function dumper:GetAchievementData()
   local personalCount = 0;
 
   local id, name, points, completed, month, day, year, description, flags, icon, rewardText, isGuildAch;
-  local posixtime;
+  local posixtime, status;
 
   for i = 1, 10000 do -- TODO: maximum value
     status, id, _ --[[name]], _, completed, month, day, year, _ --[[description]], _, _, _, isGuildAch = pcall(GetAchievementInfo, i);
@@ -205,21 +269,6 @@ function dumper:GetActionData()
   return res;
 end
 
----
--- @return #number
-function dumper:GetBagItemsCount()
-  local count = 0;
-  local bagData = self.dump.bag;
-
-  if bagData then
-    for _, v in pairs(bagData) do
-      count = count + #v;
-    end
-  end
-
-  return count;
-end
-
 function dumper:GetBagData()
   local L = chardumps:GetLocale();
   local res = {};
@@ -230,8 +279,7 @@ function dumper:GetBagData()
     local nCount = 0;
     local tmpBag = {};
     for slot = 1, GetContainerNumSlots(bag) do
-      local itemLink = GetContainerItemLink(bag, slot);
-      local _, count = GetContainerItemInfo(bag, slot);
+      local itemLink, count = readContainerItem(bag, slot);
 
       if itemLink and count then
         local tmpItem = {};
@@ -245,6 +293,8 @@ function dumper:GetBagData()
           if tonumber(gem2) > 0 then tmpItem["G2"] = tonumber(gem2) end
           if tonumber(gem3) > 0 then tmpItem["G3"] = tonumber(gem3) end
         end
+        if not tmpItem.I then error("Could not parse item link in bag " .. bag .. " slot " .. slot) end
+        addContainerDetails(tmpItem, bag, slot);
         nCount = nCount + 1;
         table.insert(tmpBag, tmpItem);
       end
@@ -283,9 +333,14 @@ function dumper:GetBankData()
   chardumps.log:Message(L.GetBank);
   for i = 40, 74 do -- main bank
     local itemLink = GetInventoryItemLink("player", i)
+    if not itemLink and type(GetInventoryItemTexture) == "function" and GetInventoryItemTexture("player", i) then
+      error("Bank item data not loaded for slot " .. i);
+    end
     if itemLink then
       local count = GetInventoryItemCount("player",i)
+      local matched = false;
       for id, enchant, gem1, gem2, gem3 in string.gmatch(itemLink,".-Hitem:(%d+):(%d+):(%d+):(%d+):(%d+)") do
+        matched = true;
         local tmpItem = {
           ["I"] = tonumber(id), ["link"] = itemLink
         };
@@ -295,8 +350,11 @@ function dumper:GetBankData()
         if tonumber(gem2) > 0 then tmpItem["G2"] = tonumber(gem2) end
         if tonumber(gem3) > 0 then tmpItem["G3"] = tonumber(gem3) end
 
+        addInventoryDetails(tmpItem, i);
+
         res.mainbank[i] = tmpItem;
       end
+      if not matched then error("Could not parse item link in bank slot " .. i) end
       itemCount = itemCount + 1;
     end
   end
@@ -308,10 +366,11 @@ function dumper:GetBankData()
     local bag = res[j];
     itemCount = 0;
     for slot = 1, GetContainerNumSlots(i) do
-      local itemLink = GetContainerItemLink(i, slot)
+      local itemLink, count = readContainerItem(i, slot);
       if itemLink then
-        local _, count = GetContainerItemInfo(i, slot);
+        local matched = false;
         for id, enchant, gem1, gem2, gem3 in string.gmatch(itemLink, ".-Hitem:(%d+):(%d+):(%d+):(%d+):(%d+)") do
+          matched = true;
           local tmpItem = {
             ["I"] = tonumber(id), ["link"] = itemLink
           };
@@ -321,8 +380,11 @@ function dumper:GetBankData()
           if tonumber(gem2) > 0 then tmpItem["G2"] = tonumber(gem2) end
           if tonumber(gem3) > 0 then tmpItem["G3"] = tonumber(gem3) end
 
+          addContainerDetails(tmpItem, i, slot);
+
           bag[slot] = tmpItem;
         end
+        if not matched then error("Could not parse item link in bank bag " .. i .. " slot " .. slot) end
         itemCount = itemCount + 1;
       end
     end
@@ -587,9 +649,14 @@ function dumper:GetInventoryData()
 
   for i = 1, 23 do
     local itemLink = GetInventoryItemLink("player", i);
+    if not itemLink and type(GetInventoryItemTexture) == "function" and GetInventoryItemTexture("player", i) then
+      error("Equipped item data not loaded for slot " .. i);
+    end
     if itemLink then
-      itemCount = GetInventoryItemCount("player", i);
+      local itemCount = GetInventoryItemCount("player", i);
+      local matched = false;
       for id, enchant, gem1, gem2, gem3 in string.gmatch(itemLink,".-Hitem:(%d+):(%d+):(%d+):(%d+):(%d+)") do 
+        matched = true;
         local tmpItem = {
           ["I"] = tonumber(id), ["link"] = itemLink
         };
@@ -599,17 +666,21 @@ function dumper:GetInventoryData()
         if tonumber(gem2) > 0 then tmpItem["G2"] = tonumber(gem2) end
         if tonumber(gem3) > 0 then tmpItem["G3"] = tonumber(gem3) end
 
+        addInventoryDetails(tmpItem, i);
+
         res[i] = tmpItem;
       end
+      if not matched then error("Could not parse equipped item link in slot " .. i) end
     end
   end
 
   local container = 0;
   for slot = 1, GetContainerNumSlots(container) do
-    local itemLink = GetContainerItemLink(container, slot);
+    local itemLink, itemCount = readContainerItem(container, slot);
     if itemLink then
-      local _, itemCount = GetContainerItemInfo(container, slot);
+      local matched = false;
       for id, enchant, gem1, gem2, gem3 in string.gmatch(itemLink, ".-Hitem:(%d+):(%d+):(%d+):(%d+):(%d+)") do 
+        matched = true;
         local tmpItem = {
           ["I"] = tonumber(id), ["link"] = itemLink
         };
@@ -619,8 +690,11 @@ function dumper:GetInventoryData()
         if tonumber(gem2) > 0 then tmpItem["G2"] = tonumber(gem2) end
         if tonumber(gem3) > 0 then tmpItem["G3"] = tonumber(gem3) end
 
+        addContainerDetails(tmpItem, container, slot);
+
         res[index] = tmpItem;
       end
+      if not matched then error("Could not parse backpack item link in slot " .. slot) end
     end
     index = index + 1;
   end
@@ -628,21 +702,25 @@ function dumper:GetInventoryData()
   container = -2;
   index = 86;
   for slot = 1, GetContainerNumSlots(container) do
-    local itemLink = GetContainerItemLink(container, slot);
+    local itemLink, itemCount = readContainerItem(container, slot);
     if itemLink then
       local id = GetContainerItemID(container, slot);
-      local _, itemCount = GetContainerItemInfo(container, slot);
+      if not id then error("Keyring item ID not loaded in slot " .. slot) end
       local tmpItem = {
         ["I"] = tonumber(id), ["link"] = itemLink
       };
       if itemCount > 1 then tmpItem["N"] = itemCount end
+      addContainerDetails(tmpItem, container, slot);
       res[index] = tmpItem;
     end
     index = index + 1;
   end
 
   -- Add main bank
-  local bankData = dumper:GetDynamicData("bank");
+  local bankData = {};
+  if not dumper.activeDumpOptions or dumper.activeDumpOptions.entities.bank then
+    bankData = dumper:GetDynamicData("bank");
+  end
   if bankData.mainbank then
     for i = 40, 74 do
       if bankData.mainbank[i] then
@@ -704,6 +782,9 @@ function dumper:GetPlayerData()
   res.kills            = honorableKills;
   res.money            = math.floor(GetMoney() / 10000); -- convert to gold
   res.money_copper     = GetMoney();
+  if dumper.playedTime then
+    res.playtime = copyDump(dumper.playedTime);
+  end
   if type(GetNumTalentGroups) == "function" then
     res.specs            = GetNumTalentGroups();
   end
@@ -746,7 +827,7 @@ end
 -- @return #table
 function dumper:GetQuestDataReal()
   local L = chardumps:GetLocale();
-  local questIds = self:GetDynamicData("quest");
+  local questIds = chardumps:CopyTable(self:GetDynamicData("quest"));
   GetQuestsCompleted(questIds);
   self:SetDynamicData("quest", questIds);
 
@@ -980,7 +1061,9 @@ function dumper:GetTitleData()
 
   chardumps.log:Message(L.GetTitles);
   for i = 1, GetNumTitles() do
-    if IsTitleKnown(i) == 1 then
+    -- 3.3.5 returns 1/nil; later clients return true/false.
+    local known = IsTitleKnown(i);
+    if known == 1 or known == true then
       table.insert(res, i);
     end
   end
